@@ -42,11 +42,11 @@ class Trainer():
     # Pretrain the critic using negative sample instances
     # -----------------
     def pretrain_critic(self, num_epochs, data_loader):
-        
+        D_optimizer = optim.Adam(self.critic_obj.parameters(), lr=self.LR*5)
         print('DEVICE', self.device)
         for epoch in tqdm(range(num_epochs)):
             for i, data in enumerate(data_loader):
-                self.D_optimizer.zero_grad()
+                D_optimizer.zero_grad()
                 pos = data[0]
                 pos = pos.to(self.device)
                 neg = data[1]
@@ -55,7 +55,6 @@ class Trainer():
                 neg_loss = []
                 for n in range(num_negSamples):
                     x_n = neg[n].to(self.device)
-                  
                     
                     x_n_loss = self.critic_obj(x_n)
                     neg_loss.append(x_n_loss)
@@ -63,14 +62,16 @@ class Trainer():
                 neg_loss = torch.cat(neg_loss, dim =-1)
                 pos_loss = self.critic_obj(pos)
                 neg_loss = torch.mean(neg_loss, dim=-1, keepdims=False)
-                _loss = -(pos_loss - neg_loss)
+                l2_reg = torch.norm(self.critic_obj.FC.weight) 
+                _loss =  -( torch.log(1+pos_loss) + torch.log(1 - neg_loss + 0.00001)) + 0.1*l2_reg
                 _loss = _loss.mean()
                 _loss.backward()
-               
-                self.D_optimizer.step()
+                torch.nn.utils.clip_grad_norm_(self.critic_obj.parameters(), 1)
+                D_optimizer.step()
                 self.dict_losses['pretrain_D'].append(_loss.cpu().data.numpy().mean())
                 if i % self.log_interval//10 == 0:
                     print('Pretrain  Epoch {}| Index {} loss {} '.format(epoch, i + 1, self.dict_losses['pretrain_D'][-1]))
+                    
         return  self.dict_losses['pretrain_D']
 
     def _train_G(self, data):
@@ -80,8 +81,10 @@ class Trainer():
 
         # Calculate loss and optimize
         gen_loss = self.critic_obj(generated_data)
-        g_loss = - gen_loss.mean()
+        g_loss = (1 - gen_loss)
+        g_loss = g_loss.mean()
         g_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.generator_obj.parameters(), 1)
         self.G_optimizer.step()
         # Record loss
         self.dict_losses['G'].append(g_loss.cpu().data.numpy().mean())
@@ -100,18 +103,13 @@ class Trainer():
        
         d_real = self.critic_obj(data)
         d_generated = self.critic_obj(generated_data)
+        l2_reg = torch.norm(self.critic_obj.FC.weight) 
         
-        # Get gradient penalty
-        gradient_penalty = self._gradient_penalty(data, generated_data)
-        self.dict_losses['GP'].append(gradient_penalty.cpu().data.numpy().mean())
-#         gradient_penalty = 0
-#         self.dict_losses['GP'].append(gradient_penalty)
-
-    
         # Create total loss and optimize
-        self.D_optimizer.zero_grad()
-        d_loss = d_generated.mean() - d_real.mean() + gradient_penalty
+       
+        d_loss =  -d_real.mean() + (1 - d_generated).mean() + 0.01 * l2_reg 
         d_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.critic_obj.parameters(), 0.5)
         self.D_optimizer.step()
         self.dict_losses['D'].append(d_loss.cpu().data.numpy().mean())
         return
@@ -119,26 +117,23 @@ class Trainer():
     def train(self, data_loader, num_epochs):
         self.num_steps = 0
         for epoch in tqdm(range(num_epochs)):
-            print("\nEpoch {}".format(epoch + 1))
+           
             for i, data in enumerate(data_loader):
                 data = data.to(self.device)
                 self.num_steps += 1
                 self._train_C(data)
                 # Only update generator every |critic_iterations| iterations
-                if self.num_steps % self.critic_iterations == 0:
-                    self._train_G(data)
-                    print("Iteration {:0.4f}  G:{:0.4f}".format(
-                        i + 1, self.dict_losses['G'][-1])
-                    )                            
+                                      
                 if (i+1) % self.log_interval == 0:
                     print("Iteration {:0.4f} D:{:0.4f} ".format(
-                        i + 1, self.dict_losses['D'][-1])
+                        self.num_steps, self.dict_losses['D'][-1])
                     )
-                                        
-#                     print("Iteration {:0.4f} D: G:{:0.4f} GP:{:0.4f} Gradient norm: {:0.4f}".format(
-#                         i + 1, self.dict_losses['D'][-1], self.losses['G'][-1], self.losses['GP'][-1],
-#                         self.losses['gradient_norm'][-1])
-#                     )
+                    if (i+1) % self.critic_iterations == 0:
+                        self._train_G(data)
+                        print("Iteration {:0.4f}  G:{:0.4f}".format(
+                            i + 1, self.dict_losses['G'][-1])
+                        )      
+            
         return
 
     def _gradient_penalty(self, real_data, generated_data):

@@ -9,9 +9,9 @@ from itertools import combinations
 
 class generator_v1(nn.Module):
 
-    def __init__ (self, domain_dims, z_dim, lstm_hidden_dims=256, lstm_num_layers = 2, gumbel_T= 0.25):
+    def __init__ (self, device, domain_dims, z_dim, lstm_hidden_dims=256, lstm_num_layers = 2, gumbel_T= 0.25):
         super(generator_v1, self).__init__()
-
+        self.device = device
         self.z_dim = z_dim
         self.domain_dims = domain_dims # e.g. [100,20,50,250]
         self.num_dims = len(self.domain_dims)
@@ -31,8 +31,9 @@ class generator_v1(nn.Module):
         for i in range(self.num_dims):
             self.FC_List.append(
                     nn.Sequential(
+                    nn.BatchNorm1d(fc_inp_dim),
                     nn.Linear(fc_inp_dim, self.domain_dims[i] ),
-                    nn.Dropout(0.05),
+                    nn.Dropout(0.1),
                     nn.LeakyReLU()
                 )
             )
@@ -40,14 +41,14 @@ class generator_v1(nn.Module):
 
     def forward(self, sample_size = 1):
         # Random sample
-        z = torch.normal( mean=0, std = 1, size=[sample_size, self.z_dim])
-        print(z.shape)
+        z = torch.normal( mean=0, std = 1, size=[sample_size, self.z_dim]).to(self.device)
+        
         # Append position vector to each input
-        pos = torch.eye(self.num_dims).reshape([self.num_dims * self.num_dims]).repeat(sample_size,1).view(-1, self.num_dims , self.num_dims )
+        pos = torch.eye(self.num_dims).reshape([self.num_dims * self.num_dims]).repeat(sample_size,1).view(-1, self.num_dims , self.num_dims ).to(self.device)
         z1 = z.repeat(1, self.num_dims).reshape([-1, self.num_dims, self.z_dim  ]) # Shape : [ batch, self.num_dims , self.z_dim]
 
         # lstm input
-        lstm_input = torch.cat([z1,pos],dim=-1) # Shape [batch, self.num_dims , self.z_dim + self.num_dims ]
+        lstm_input = torch.cat([z1, pos],dim=-1) # Shape [batch, self.num_dims , self.z_dim + self.num_dims ]
         # Output shape : (batch, seq, feature)
         lstm_op, _  = self.lstm(lstm_input)
 
@@ -56,11 +57,9 @@ class generator_v1(nn.Module):
         x1 = [ _.squeeze(1) for _ in x1]
         x2 = []
 
-        for i in range(self.num_dims):
-            print(x1[i].shape)
+        for i in range(self.num_dims):           
             # Concatenate z to lstm output
             _inp = torch.cat( [x1[i],z], dim=1)
-            print(_inp.shape)
             r = self.FC_List[i](_inp)
             # Apply gumbel softmax
             r = F.gumbel_softmax(r, tau=self.gumbel_T, hard=True)
@@ -72,6 +71,6 @@ class generator_v1(nn.Module):
         return x2
 
 
-obj = generator_v1 (domain_dims=[100,150,300], z_dim=20, lstm_hidden_dims=256, lstm_num_layers=2)
-a = obj.forward(40)
-print(a)
+# obj = generator_v1 (domain_dims=[100,150,300], z_dim=20, lstm_hidden_dims=256, lstm_num_layers=2)
+# a = obj.forward(40)
+# print(a)
