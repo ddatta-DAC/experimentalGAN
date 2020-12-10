@@ -41,8 +41,11 @@ class Trainer():
     # -----------------
     # Pretrain the critic using negative sample instances
     # -----------------
-    def pretrain_critic(self, num_epochs, data_loader):
-        D_optimizer = optim.Adam(self.critic_obj.parameters(), lr=self.LR*5)
+    def pretrain_critic(self, num_epochs, data_loader, LR = None):
+        if LR is None:
+            LR = self.LR*2
+            
+        D_optimizer = optim.Adam(self.critic_obj.parameters(), lr=LR)
         print('DEVICE', self.device)
         for epoch in tqdm(range(num_epochs)):
             for i, data in enumerate(data_loader):
@@ -55,21 +58,24 @@ class Trainer():
                 neg_loss = []
                 for n in range(num_negSamples):
                     x_n = neg[n].to(self.device)
-                    
                     x_n_loss = self.critic_obj(x_n)
                     neg_loss.append(x_n_loss)
                     
                 neg_loss = torch.cat(neg_loss, dim =-1)
-                pos_loss = self.critic_obj(pos)
+                eps = 0.000001
+                neg_loss = -torch.log( 1 - neg_loss + eps)
                 neg_loss = torch.mean(neg_loss, dim=-1, keepdims=False)
+                pos_loss = torch.log(self.critic_obj(pos))
+                
+                
                 l2_reg = torch.norm(self.critic_obj.FC.weight) 
-                _loss =  -( torch.log(1+pos_loss) + torch.log(1 - neg_loss + 0.00001)) + 0.1*l2_reg
-                _loss = _loss.mean()
+                _loss =  pos_loss + neg_loss  
+                _loss = _loss.mean() + 0.01 * l2_reg
                 _loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.critic_obj.parameters(), 1)
                 D_optimizer.step()
                 self.dict_losses['pretrain_D'].append(_loss.cpu().data.numpy().mean())
-                if i % self.log_interval//10 == 0:
+                if i % self.log_interval == 0:
                     print('Pretrain  Epoch {}| Index {} loss {} '.format(epoch, i + 1, self.dict_losses['pretrain_D'][-1]))
                     
         return  self.dict_losses['pretrain_D']
@@ -106,7 +112,7 @@ class Trainer():
         l2_reg = torch.norm(self.critic_obj.FC.weight) 
         
         # Create total loss and optimize
-       
+        # Maximize d_real, minimize d_generated
         d_loss =  -d_real.mean() + (1 - d_generated).mean() + 0.01 * l2_reg 
         d_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.critic_obj.parameters(), 0.5)
@@ -114,25 +120,27 @@ class Trainer():
         self.dict_losses['D'].append(d_loss.cpu().data.numpy().mean())
         return
 
-    def train(self, data_loader, num_epochs):
+    def train(self, data_loader, data_loader_wNeg, num_epochs):
         self.num_steps = 0
+        
         for epoch in tqdm(range(num_epochs)):
-           
+            
+            if (epoch+1)%25 == 0:
+                self.pretrain_critic(num_epochs = 2, data_loader = data_loader_wNeg , LR = self.LR/2)
+                
             for i, data in enumerate(data_loader):
                 data = data.to(self.device)
                 self.num_steps += 1
                 self._train_C(data)
                 # Only update generator every |critic_iterations| iterations
-                                      
+                if (i+1) % self.critic_iterations == 0:
+                    self._train_G(data)                    
+                
                 if (i+1) % self.log_interval == 0:
-                    print("Iteration {:0.4f} D:{:0.4f} ".format(
-                        self.num_steps, self.dict_losses['D'][-1])
+                    print("Iteration {} D:{:0.4f} G:{:0.4f} ".format(
+                        self.num_steps, self.dict_losses['D'][-1], self.dict_losses['G'][-1])
                     )
-                    if (i+1) % self.critic_iterations == 0:
-                        self._train_G(data)
-                        print("Iteration {:0.4f}  G:{:0.4f}".format(
-                            i + 1, self.dict_losses['G'][-1])
-                        )      
+                         
             
         return
 
