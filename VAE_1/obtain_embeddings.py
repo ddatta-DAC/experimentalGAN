@@ -55,6 +55,8 @@ def save_vectors(w2v_model):
     global DIR
     global MODEL_SAVE_DATA_LOC
     global idMapping_df
+    global emb_dim
+    
     lookUp_dict = {}
     domains = set(idMapping_df['domain'])
     vectors_dict = {}
@@ -70,7 +72,7 @@ def save_vectors(w2v_model):
     for n_type, _dict in vectors_dict.items():
         arr_vec = [_[1] for _ in sorted(_dict.items(), key=itemgetter(0))]
         arr_vec = np.array(arr_vec)
-        fname = 'n2v_{}.npy'.format(n_type)
+        fname = 'n2v_{}_{}.npy'.format(emb_dim, n_type)
         fname = os.path.join(MODEL_SAVE_DATA_LOC, fname)
         np.save(fname, arr_vec)
     return
@@ -86,7 +88,7 @@ graph = Graph(
     directed=False, weighted=True
 )
 
-n2v = Node2Vec(graph, dim=64, walk_length=100, context=10, p=1, q=1, workers=mp.cpu_count())
-n2v.train(epochs=10)
+n2v = Node2Vec(graph, dim=emb_dim, walk_length=100, context=10, p=1, q=1, workers=mp.cpu_count())
+n2v.train(epochs=epochs)
 
 save_vectors(n2v)
