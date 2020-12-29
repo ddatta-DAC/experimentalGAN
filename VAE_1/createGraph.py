@@ -96,6 +96,7 @@ def generate_graph_data(DIR, DATA_LOC,  train_csv_file = 'train_data.csv'):
 
     edges_df.to_csv(os.path.join(SAVE_DIR, 'edges.csv'), index=False)
     nodes_df.to_csv(os.path.join(SAVE_DIR, 'nodes.csv'), index=False)
+    return
 
 # -----------------------
 # Return list of tuple (source, target, weight)
